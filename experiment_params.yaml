@@ -1,0 +1,139 @@
+params_0:
+  model_params:
+    lags: 
+      - None
+    output_chunk_length: 1
+    lags_past_covariates: 
+      - -1
+    # likelihood: "quantile"
+    # quantiles: [0.05, 0.5, 0.95]
+    multi_models: true
+    random_state: 42
+    use_static_covariates: true
+    categorical_static_covariates: static_cols
+    verbose: -1
+    # device: "cuda"
+
+  forecast_params:
+    # start: 0.7
+    forecast_horizon: 1
+    # stride: 3
+    predict_likelihood_parameters: false
+    # num_samples: 50
+    retrain: false
+    verbose: false
+
+  param_description: "lags: None,\noutput_chunk_length: 1,\n lags_past_covariates: -1,\n multi_models: true,\n use_static_covariates: true,\n categorical_static_covariates: static_cols,\n forecast_horizon: 1,\n predict_likelihood_parameters: false,\n retrain: false,\n verbose: false"
+
+
+params_1:
+  model_params:
+    lags: 
+      - -1
+    output_chunk_length: 1
+    lags_past_covariates: 
+      - -1
+    # likelihood: "quantile"
+    # quantiles: [0.05, 0.5, 0.95]
+    multi_models: true
+    random_state: 42
+    use_static_covariates: true
+    categorical_static_covariates: static_cols
+    verbose: -1
+    # device: "cuda"
+
+  forecast_params:
+    # start: 0.7
+    forecast_horizon: 1
+    # stride: 3
+    predict_likelihood_parameters: false
+    # num_samples: 50
+    retrain: false
+    verbose: false
+
+  param_description: "lags: -1, output_chunk_length: 1, lags_past_covariates: -1, multi_models: true, use_static_covariates: true, categorical_static_covariates: static_cols, forecast_horizon: 1, predict_likelihood_parameters: false, retrain: false, verbose: false"
+
+
+params_2:
+  model_params:
+    lags: 
+      - -2
+    output_chunk_length: 1
+    lags_past_covariates: 
+      - -2
+    # likelihood: "quantile"
+    # quantiles: [0.05, 0.5, 0.95]
+    multi_models: true
+    random_state: 42
+    use_static_covariates: true
+    categorical_static_covariates: static_cols
+    verbose: -1
+    # device: "cuda"
+
+  forecast_params:
+    # start: 0.7
+    forecast_horizon: 1
+    # stride: 3
+    predict_likelihood_parameters: false
+    # num_samples: 50
+    retrain: false
+    verbose: false
+
+  param_description: "lags: -2,\noutput_chunk_length: 1,\n lags_past_covariates: -2,\n multi_models: true,\n use_static_covariates: true,\n categorical_static_covariates: static_cols,\n forecast_horizon: 1,\n predict_likelihood_parameters: false,\n retrain: false,\n verbose: false"
+
+
+params_3:
+  model_params:
+    lags: 
+      - -3
+    output_chunk_length: 1
+    lags_past_covariates: 
+      - -3
+    # likelihood: "quantile"
+    # quantiles: [0.05, 0.5, 0.95]
+    multi_models: true
+    random_state: 42
+    use_static_covariates: true
+    categorical_static_covariates: static_cols
+    verbose: -1
+    # device: "cuda"
+
+  forecast_params:
+    # start: 0.7
+    forecast_horizon: 1
+    # stride: 3
+    predict_likelihood_parameters: false
+    # num_samples: 50
+    retrain: false
+    verbose: false
+
+  param_description: "lags: -3,\noutput_chunk_length: 1,\n lags_past_covariates: -3,\n multi_models: true,\n use_static_covariates: true,\n categorical_static_covariates: static_cols,\n forecast_horizon: 1,\n predict_likelihood_parameters: false,\n retrain: false,\n verbose: false"
+
+
+
+params_4:
+  model_params:
+    lags: 
+      - 1
+    output_chunk_length: 2
+    lags_past_covariates: 
+      - 1
+    # likelihood: "quantile"
+    # quantiles: [0.05, 0.5, 0.95]
+    multi_models: true
+    random_state: 42
+    use_static_covariates: true
+    categorical_static_covariates: static_cols
+    verbose: -1
+    # device: "cuda"
+
+  forecast_params:
+    # start: 0.7
+    forecast_horizon: 1
+    # stride: 3
+    predict_likelihood_parameters: false
+    # num_samples: 50
+    retrain: false
+    verbose: false
+
+  param_description: "lags: 1,\noutput_chunk_length: 2,\n lags_past_covariates: 1,\n multi_models: true,\n use_static_covariates: true,\n categorical_static_covariates: static_cols,\n forecast_horizon: 1,\n predict_likelihood_parameters: false,\n retrain: false,\n verbose: false"

@@ -1,0 +1,32 @@
+{
+	
+	"name": "jupyter/minimal-notebook py3.11",
+	"build": {
+	  "context": "..",
+	  "dockerfile": "Dockerfile",
+	  "args": {
+		"env_name": "py3.11",
+		"py_ver": "3.11"
+	
+	  }
+	  
+	},
+	"runArgs": ["--env-file", ".env"],
+	"forwardPorts": [8888],
+	"postCreateCommand": "echo 'Container ready! Python version:' && conda run -n py3.11 python --version",
+	"remoteUser": "jovyan",
+	"customizations": {
+		"vscode": {
+		  "settings": {
+			"terminal.integrated.shell.linux": "/bin/bash"
+		  },
+		  "extensions": [
+			"ms-python.python",
+			"ms-toolsai.jupyter",        
+			"redhat.vscode-yaml",
+			"eamodio.gitlens"
+			
+		  ]
+		}
+	  }
+  }
