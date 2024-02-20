@@ -1,29 +1,29 @@
-params_0:
-  model_params:
-    lags: 
-      - None
-    output_chunk_length: 1
-    lags_past_covariates: 
-      - -1
-    # likelihood: "quantile"
-    # quantiles: [0.05, 0.5, 0.95]
-    multi_models: true
-    random_state: 42
-    use_static_covariates: true
-    categorical_static_covariates: static_cols
-    verbose: -1
-    # device: "cuda"
+# params_0:
+#   model_params:
+#     lags: 
+#       - None
+#     output_chunk_length: 1
+#     lags_past_covariates: 
+#       - -1
+#     # likelihood: "quantile"
+#     # quantiles: [0.05, 0.5, 0.95]
+#     multi_models: true
+#     random_state: 42
+#     use_static_covariates: true
+#     categorical_static_covariates: static_cols
+#     verbose: -1
+#     # device: "cuda"
 
-  forecast_params:
-    # start: 0.7
-    forecast_horizon: 1
-    # stride: 3
-    predict_likelihood_parameters: false
-    # num_samples: 50
-    retrain: false
-    verbose: false
+#   forecast_params:
+#     # start: 0.7
+#     forecast_horizon: 1
+#     # stride: 3
+#     predict_likelihood_parameters: false
+#     # num_samples: 50
+#     retrain: false
+#     verbose: false
 
-  param_description: "lags: None,\noutput_chunk_length: 1,\n lags_past_covariates: -1,\n multi_models: true,\n use_static_covariates: true,\n categorical_static_covariates: static_cols,\n forecast_horizon: 1,\n predict_likelihood_parameters: false,\n retrain: false,\n verbose: false"
+#   param_description: "lags: None,\noutput_chunk_length: 1,\n lags_past_covariates: -1,\n multi_models: true,\n use_static_covariates: true,\n categorical_static_covariates: static_cols,\n forecast_horizon: 1,\n predict_likelihood_parameters: false,\n retrain: false,\n verbose: false"
 
 
 params_1:
@@ -38,8 +38,9 @@ params_1:
     multi_models: true
     random_state: 42
     use_static_covariates: true
-    categorical_static_covariates: static_cols
+    # categorical_static_covariates: static_cols
     verbose: -1
+    # silent: True
     # device: "cuda"
 
   forecast_params:
@@ -66,7 +67,7 @@ params_2:
     multi_models: true
     random_state: 42
     use_static_covariates: true
-    categorical_static_covariates: static_cols
+    # categorical_static_covariates: static_cols
     verbose: -1
     # device: "cuda"
 
@@ -94,7 +95,7 @@ params_3:
     multi_models: true
     random_state: 42
     use_static_covariates: true
-    categorical_static_covariates: static_cols
+    # categorical_static_covariates: static_cols
     verbose: -1
     # device: "cuda"
 
@@ -123,7 +124,7 @@ params_4:
     multi_models: true
     random_state: 42
     use_static_covariates: true
-    categorical_static_covariates: static_cols
+    # categorical_static_covariates: static_cols
     verbose: -1
     # device: "cuda"
 
