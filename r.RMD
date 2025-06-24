@@ -1,0 +1,986 @@
+---
+title: "campaign performance"
+date: "`r Sys.Date()`"
+output:
+  html_document:
+    # toc: true
+    # toc_float: true
+    self_contained: false    
+    pandoc_args: ["--lua-filter", "tabset.lua"]
+    code_folding: hide
+---
+```{=html}
+<script src='tabset.js'></script>
+```
+
+<style>
+h2 {
+    font-size: 20px;
+}
+</style>
+
+<style type="text/css">
+   .main-container {max-width: 100%;}
+   .row {display: flex;}
+   .column {flex: 50%;  padding: 0 80px;}
+</style>
+
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(message = FALSE, warning = FALSE)
+options(width = 10000)
+```
+## {.tabset .tabset-fade .tabset-pills}
+
+### background 
+
+Goal is to improve campaign management by using historical performance data to predict campaign performance and take optimal action given that information https://askmediagroup.atlassian.net/browse/ATLAS-2499.
+
+<br/>
+
+#### initial approach 
+brainstorming: https://miro.com/app/board/uXjVNuDhUVU=/
+
+- directive: quick win | forecasting focus 
+
+- predict roas [metric currently for autobid engine but in look back way] 
+
+  - suggested solution: adapt time series forecast to ml task   
+<br/>
+- use prediction to create new action rule set <br/> - [although mapping from prediction to action not clear; many considerations & potential approaches]
+
+<br/>
+
+#### outcome 
+
+multi-series recursive forecasting model scoring 0.19 MAE (Mean absolute error) on ROAS for validation set (56 campaigns GN)<br/>
+https://git.ask.com/ask/search-services/campaign_value_prediction 
+
+<br/>
+
+#### issues
+- GN data is too immature and too imbalanced to apply useful machine learning to it. 
+    - immature in the sense that historical data encompasses only aprox 146 campaigns with average 7 day duration [small dataset]
+    - imbalanced in the sense that all but three of those campaigns have been profitable. a ml model that only learns on trained exclusively on data from campaigns with ROAS below the break-even point is unlikely to accurately predict the success of campaigns that could achieve or surpass the break-even ROAS, limiting its ability to identify potentially winning campaigns 
+    - a solution of this type which may accurately predict a losing ROAS score, when mapped onto action rules will simply stop all campaigns in order to minimize loss
+    - due to nature of marketer data, while a good source for potentially understanding underlying patterns for the task is risky to model with due to inherent nature of marketeer campaign management (not rule based or data driven) 
+
+<br/>
+
+#### next 
+
+- having said that: ml adapted forecasting was valuable work in terms of understanding the nuances of the task and could be applied future campaign rule set having been trained on marketer data and the apply transfer learning or other forecasting methodology. 
+- combination of rules based on trigger points (constructed from marketer exp) / in combo with forecasting model 
+
+
+
+### marketer data 
+
+<!-- Given issues, before trying to create ml solution deeper understanding of underlying performance dynamics of campaigns is needed. <br/> 
+
+Given scarcity of GN data, marketeer data will be used to explore these dynamics. 
+
+
+<br/>
+
+#### Notes: -->
+
+<textarea 
+  id="name" 
+  name="name"
+  style="width:40%;"
+  rows="1"
+  oninput="this.style.height = '';this.style.height = this.scrollHeight + 'px'"
+></textarea>
+
+<br/>
+<br/>
+<br/> 
+
+
+#### {.tabset .tabset-fade .tabset-pills}
+
+```{r transform, echo=FALSE}
+
+#imports----
+library(data.table)
+library(Hmisc)
+library(plotly)
+library(DataExplorer)
+library(summarytools)
+library(reticulate)
+library(xray)
+library(plyr)
+library(dplyr)
+# detach("package:plyr", unload=TRUE)
+# library(streamgraph)
+library(highcharter)
+library(lubridate)
+py_run_string("import sys; sys.path.append('utils')")
+amg_utils <- import("amg_utils")
+#load----
+mnt_data = fread("marketer_data_only_us_240315.csv")
+# current_date <- Sys.Date()
+# formatted_date <- format(current_date, "%y%m%d")
+# file_name <- paste0("marketer_data_only_us_", formatted_date, ".csv")
+# r_to_py(amg_utils$eq(paste(readLines("marketer_data.sql"), collapse = "\n")))$to_csv(file_name, index = FALSE)
+# mnt_data_new = fread(file_name)
+
+#transforms----
+for (j in grep("_id", names(mnt_data), ignore.case = TRUE)) {
+  set(mnt_data, j=j, value=as.character(mnt_data[[j]]))
+}
+mnt_data[, buyer_name := as.character(buyer_name)]
+mnt_data[, roas := as.numeric(roas)]
+mnt_data[, eventdate := as.Date(eventdate, format = "%Y-%m-%d")]
+mnt_data[, campaign_start_date := min(eventdate), ad_id]
+mnt_data[, campaign_end_date := max(eventdate), ad_id]
+mnt_data[, year_month := format(as.Date(eventdate), "%Y-%m")] 
+mnt_data[, total_campaign_contrib := sum(contrib, na.rm = TRUE), ad_id]
+mnt_data[, total_campaign_revenue := sum(net_revenue, na.rm = TRUE), ad_id]
+mnt_data[, total_campaign_spend := sum(fb_spend, na.rm = TRUE), ad_id]
+mnt_data[, total_campaign_roas := total_campaign_revenue / total_campaign_spend, ad_id]
+mnt_data[, average_roas_of_campaign := mean(roas, na.rm = TRUE), ad_id]
+mnt_data[, campaign_duration := as.numeric(difftime(max(eventdate), min(eventdate), units = "days")), by = .(campaign_start_date, ad_id)]
+mnt_data[, campaign_active_days := .N,ad_id]
+mnt_data[,estimated_budget := round_any(fb_spend,10)]
+
+mnt_data[,sequence_break:= fifelse(lead(eventdate) - eventdate == 1,0,1), ad_id]
+mnt_data[,sequence_break_above_2 := fifelse(lead(eventdate) - eventdate > 2, 1, 0), ad_id]
+
+# filter dataset to only include campaigns between x and y days
+mnt_data = mnt_data[between(campaign_active_days, 4, 90)]
+setcolorder(mnt_data,sort(names(mnt_data)))
+
+contrib = mnt_data[,sum(contrib),ad_id]
+positive_contrib =  contrib[V1 >= 10]
+
+non_vaccine_winning_campaigns = mnt_data[(ad_id %in% positive_contrib$ad_id & !grepl("vaccine", campaign_name, ignore.case = TRUE) & !duplicated(ad_id)), ad_id]
+
+winner_buyers = c("Lorenzo Talia", "David Vion", "Simantika Mandloi") 
+```
+
+##### US campaigns
+
+```{sql campaign_performance_data_query , eval=FALSE}
+SELECT    
+   a.eventdate,   
+   a.buyer_initials,
+   a.buyer_name,
+   a.account_currency,
+   a.account_id,
+   a.account_name,
+   a.ad_id, 
+   a.ad_name,
+   a.adset_id,
+   a.adset_name,
+   a.campaign_id,
+   a.campaign_name,
+ 
+   a.job_type,
+   d.first_budget,
+   COALESCE(a.fb_clicks_all, 0) AS fb_clicks_all,
+   COALESCE(a.fb_impressions, 0) AS fb_impressions,
+   COALESCE(a.fb_leads, 0) AS fb_leads,
+   COALESCE(a.fb_link_click, 0) AS fb_link_click,
+   a.fb_spend,
+   a.rev_clicks,
+   a.gross_revenue,
+   a.net_revenue,
+   a.fb_clicks_all / COALESCE(NULLIF(a.fb_impressions, 0), 1) AS buy_side_ctr,
+   a.net_revenue / COALESCE(NULLIF(a.fb_spend, 0), 1) AS roas,
+   a.net_revenue / COALESCE(NULLIF(a.fb_clicks_all, 0), 1) AS rpc,
+   (a.fb_spend / COALESCE(NULLIF(a.fb_impressions, 0), 1))*1000 AS buy_side_cpm,
+   a.fb_spend / COALESCE(NULLIF(a.fb_clicks_all, 0), 1) AS cpc,
+   a.net_revenue / COALESCE(NULLIF(a.rev_clicks, 0), 1) AS rpp,
+   a.fb_spend / COALESCE(NULLIF(a.rev_clicks, 0), 1) AS cpp,
+   a.net_revenue - a.fb_spend AS contrib,    
+   
+
+   b.budget_type,   
+   b.status, 
+
+   c.devices,
+   c.countries,
+   c.network,
+   targeting_json:age_max::string AS age_max,
+   targeting_json:age_min::string AS age_min,
+   targeting_json:facebook_positions::string AS facebook_positions,
+   targeting_json:locales::string AS locales 
+   
+
+FROM PRODUCTION.BD_S2CINTERNAL.v_cm_fb_tonic_daily_combine a 
+
+LEFT JOIN SEM_TOOLS.cm_fb_campaign_management.ad_set_latest b 
+   ON a.adset_id = b.id  
+   AND a.campaign_id = b.campaign_id 
+   AND a.adset_name = b.name
+
+LEFT JOIN PRODUCTION.BD_S2CINTERNAL.V_FACEBOOK_ADSET_METADATA c 
+   ON a.adset_id = c.id 
+   AND a.eventdate = c.event_date
+
+LEFT JOIN (
+SELECT id, first_updated, first_budget FROM (
+   SELECT id, updated AS first_updated, budget AS first_budget,
+   ROW_NUMBER() OVER(PARTITION BY id ORDER BY updated ASC) AS rn
+   FROM sem_tools.CM_FB_CAMPAIGN_MANAGEMENT.ad_set
+) WHERE rn = 1
+) AS d ON a.adset_id = d.id
+
+WHERE a.buyer_initials <> 'GN'   
+and job_type = 'final'
+and c.countries = '["US"]'
+
+ORDER BY  a.ad_id ASC, a.eventdate ASC  
+```
+
+<br/>
+<br/>
+
+Number of unique campaigns: 
+```{r}
+mnt_data[!duplicated(ad_id),.N] 
+```
+<br/>
+Campaign active days range: 
+```{r}
+mnt_data[,range(campaign_active_days)]
+```
+<br/>
+
+Number of campaigns per month 
+```{r}
+mnt_data[,.N,.(ad_id,year_month)][,.N,year_month][order(-N),.(year_month,N, pct = scales::percent(N/sum(N)))][order(year_month)]
+```
+<br/>
+Distribution of campaign active days: 
+```{r,fig.width=14, fig.height=6}
+ggplot(mnt_data[!duplicated(ad_id), .N, by = .(campaign_active_days = as.factor(campaign_active_days))][order(-campaign_active_days)], aes(x = campaign_active_days, y = N)) +
+  geom_bar(stat = "identity") +
+  labs(x = "Campaign Active Days", y = "Count")
+```
+<br/>
+<br/>
+<br/>
+568 winner campaigns. defined as all generating $10 or more over lifetime 
+```{r}
+contrib = mnt_data[,sum(contrib),ad_id]
+positive_contrib =  contrib[V1 >= 10]
+length(positive_contrib$V1)  
+```
+<br/>
+<br/>
+
+35% of winners are vaccine campaigns
+<br/>
+Of the top 100 winner campaigns ranked by total_campaign_roas (total_campaign_revenue / total_campaign_spend) 77 are vaccine campaigns: 
+```{r}
+mnt_data[(ad_id %in% positive_contrib$ad_id & grepl("vaccine", campaign_name, ignore.case = TRUE) & !duplicated(ad_id)), .(ad_id, total_campaign_contrib, total_campaign_roas,campaign_name, buyer_name)][order(-total_campaign_roas)]  
+
+mnt_data[(ad_id %in% positive_contrib$ad_id & grepl("vaccine", campaign_name, ignore.case = TRUE) & !duplicated(ad_id)), .(.N),year_month] 
+
+mnt_data[(ad_id %in% positive_contrib$ad_id & grepl("vaccine", campaign_name, ignore.case = TRUE) & !duplicated(ad_id)), .N, buyer_name][order(-N)][, pct:= scales::percent(N/sum(N))][]
+```
+
+```{r,fig.width=14, fig.height=6}
+mnt_data %>%
+  group_by(eventdate) %>%
+  summarise(mean_roas = mean(roas, na.rm = TRUE)) %>%
+  hchart("line", hcaes(x = eventdate, y = mean_roas))  %>% 
+  hc_title(text = "Mean ROAS") %>% 
+  hc_navigator(enabled = TRUE) %>% hc_rangeSelector(enabled = TRUE)
+```
+
+```{r}
+mnt_data[,.(eventdate,ad_id),roas][order(-roas)][1:10]
+mnt_data[ad_id == 120200424266500656, .(ad_id, eventdate, fb_spend, net_revenue, roas, adset_name, fb_impressions, fb_clicks_all, fb_leads, fb_link_click)]  
+mnt_data[ad_id==120203606790010368,.(ad_id, eventdate, fb_spend, net_revenue,roas,adset_name,fb_impressions, fb_clicks_all, fb_leads, fb_link_click)]
+
+```
+::: {.row}
+::: {.col-md-6}
+```{r, fig.width=6, fig.height=6}
+mnt_data %>%
+  group_by(buyer_name) %>%
+  summarise(contrib = sum(contrib, na.rm = TRUE)) %>%
+  arrange(desc(contrib)) %>%
+  hchart("bar", hcaes(x = buyer_name, y = contrib)) %>%
+  hc_xAxis(type = "category") %>%
+  hc_plotOptions(series = list(color = 'rgba(50, 171, 96, 0.6)', borderColor = 'rgba(50, 171, 96, 1.0)', borderWidth = 1)) %>%
+  hc_tooltip(pointFormat = '${point.y:,.0f}') %>% 
+  hc_title(text = "Profit by Buyer_name")
+```
+:::
+
+::: {.col-md-6}
+```{r, fig.width=6, fig.height=6}
+non_vaccine_winning_campaigns = mnt_data[(ad_id %in% positive_contrib$ad_id & !grepl("vaccine", campaign_name, ignore.case = TRUE) & !duplicated(ad_id)), ad_id]
+
+mnt_data[ad_id %in% non_vaccine_winning_campaigns] %>%
+  group_by(buyer_name) %>%
+  summarise(contrib = sum(contrib, na.rm = TRUE)) %>%
+  arrange(desc(contrib)) %>%
+  hchart("bar", hcaes(x = buyer_name, y = contrib)) %>%
+  hc_xAxis(type = "category") %>%
+  hc_plotOptions(series = list(color = 'rgba(50, 171, 96, 0.6)', borderColor = 'rgba(50, 171, 96, 1.0)', borderWidth = 1)) %>%
+  hc_tooltip(pointFormat = '${point.y:,.0f}') %>% 
+  hc_title(text = "Profit by Buyer_name without vaccine campaigns")
+```
+:::
+:::
+
+<br/>
+<br/>
+
+winner_buyers:("Lorenzo Talia", "David Vion", "Simantika Mandloi") 
+
+```{r, results='markup', collapse=TRUE}
+winner_buyers = c("Lorenzo Talia", "David Vion", "Simantika Mandloi") 
+
+for (x in 1:length(winner_buyers)) {
+  print(mnt_data[(buyer_name %in% winner_buyers[x] & ad_id %in% non_vaccine_winning_campaigns),
+                 .(first_budget = estimated_budget[1],
+                   last_budget = last(lag(estimated_budget)),
+                   mean_budget = mean(estimated_budget, na.rm = TRUE) %>% round(),
+                   budget_changes = sum(fifelse(estimated_budget[-c(1, .N)] - shift(estimated_budget[-c(1, .N)]) > 0, 1, 0), na.rm = TRUE), 
+                   campaign_active_days,
+                   total_campaign_spend,
+                   total_campaign_revenue,
+                   total_campaign_roas),
+                 .(ad_id, buyer_name)][!duplicated(ad_id)])
+  cat("\n") 
+}
+```
+
+```{r}
+
+top_buyers = mnt_data[(buyer_name %in% winner_buyers & ad_id %in% non_vaccine_winning_campaigns),
+                 .(first_budget = estimated_budget[1],
+                   last_budget = last(lag(estimated_budget)),
+                   mean_budget = mean(estimated_budget, na.rm = TRUE) %>% round(),
+                   budget_changes = sum(fifelse(estimated_budget[-c(1, .N)] - shift(estimated_budget[-c(1, .N)]) > 0, 1, 0), na.rm = TRUE),
+                   campaign_active_days,
+                   total_campaign_spend,
+                   total_campaign_revenue,
+                   total_campaign_roas),
+                 .(ad_id, buyer_name)][!duplicated(ad_id)]
+
+top_buyers[,.(
+              mean_first_budget = mean(first_budget, na.rm = TRUE),
+              mean_budget = mean(mean_budget, na.rm = TRUE), 
+              mean_budget_changes = mean(budget_changes, na.rm = TRUE), 
+              mean_campaign_active_days = mean(campaign_active_days, na.rm = TRUE), 
+              mean_total_campaign_spend = mean(total_campaign_spend, na.rm = TRUE), 
+              mean_total_campaign_revenue = mean(total_campaign_revenue, na.rm = TRUE), 
+              mean_total_campaign_roas = mean(total_campaign_roas, na.rm = TRUE)),
+            by = buyer_name]
+```
+
+```{r}
+tb = mnt_data[(buyer_name %in% winner_buyers & ad_id %in% non_vaccine_winning_campaigns),]
+data.table::setorder(tb, -total_campaign_contrib, ad_id)
+tb[,mean_budget := mean(estimated_budget, na.rm = TRUE) %>% round()]
+```
+
+::: {.row}
+::: {.col-md-6}
+```{r, fig.width=6, fig.height=6}
+top_campaigns_talia = tb[(between(mean_budget,10,40) & buyer_name %in% winner_buyers[1])][!duplicated(ad_id), ad_id][1]
+
+
+cols3 <- c(
+  "buy_side_ctr", 
+  "cpp", 
+  "cpc", 
+  "rpc", 
+  "rpp", 
+  "buy_side_cpm",
+  "roas"
+  # "fb_impressions", 
+  # "fb_clicks_all", 
+  # "fb_leads", 
+  # "fb_link_click"
+  )
+
+filtered_data <- tb[ad_id %in% top_campaigns_talia, .SD, .SDcols = c(cols3, "eventdate", "ad_id")]
+
+filtered_data[, {
+  hc <- highchart() %>%
+    hc_xAxis(type = "datetime", title = list(text = "Event Date"))
+  
+hc <- hc %>%
+  hc_add_series(data = .SD, type = "line", hcaes(x = eventdate, y = buy_side_ctr, group = ad_id), name = "buy_side_ctr") %>%
+  hc_add_series(data = .SD, type = "line", hcaes(x = eventdate, y = cpp, group = ad_id), name = "cpp") %>%
+  hc_add_series(data = .SD, type = "line", hcaes(x = eventdate, y = cpc, group = ad_id), name = "cpc") %>%
+  hc_add_series(data = .SD, type = "line", hcaes(x = eventdate, y = rpc, group = ad_id), name = "rpc") %>%
+  hc_add_series(data = .SD, type = "line", hcaes(x = eventdate, y = rpp, group = ad_id), name = "rpp") %>%
+  # hc_add_series(data = .SD, type = "line", hcaes(x = eventdate, y = buy_side_cpm, group = ad_id), name = "buy_side_cpm") %>%
+  hc_add_series(data = .SD, type = "line", hcaes(x = eventdate, y = roas, group = ad_id), name = "roas") %>%
+  hc_add_theme(hc_theme_smpl())
+}]
+```
+:::
+
+::: {.col-md-6}
+```{r, fig.width=6, fig.height=6}
+top_campaigns_talia = tb[(between(mean_budget,10,40) & buyer_name %in% winner_buyers[1])][!duplicated(ad_id), ad_id][2]
+
+cols3 <- c(
+  "buy_side_ctr", 
+  "cpp", 
+  "cpc", 
+  "rpc", 
+  "rpp", 
+  "buy_side_cpm",
+  "roas"
+  # "fb_impressions", 
+  # "fb_clicks_all", 
+  # "fb_leads", 
+  # "fb_link_click"
+  )
+
+filtered_data <- tb[ad_id %in% top_campaigns_talia, .SD, .SDcols = c(cols3, "eventdate", "ad_id")]
+
+filtered_data[, {
+  hc <- highchart() %>%
+    hc_xAxis(type = "datetime", title = list(text = "Event Date"))
+  
+hc <- hc %>%
+  hc_add_series(data = .SD, type = "line", hcaes(x = eventdate, y = buy_side_ctr, group = ad_id), name = "buy_side_ctr") %>%
+  hc_add_series(data = .SD, type = "line", hcaes(x = eventdate, y = cpp, group = ad_id), name = "cpp") %>%
+  hc_add_series(data = .SD, type = "line", hcaes(x = eventdate, y = cpc, group = ad_id), name = "cpc") %>%
+  hc_add_series(data = .SD, type = "line", hcaes(x = eventdate, y = rpc, group = ad_id), name = "rpc") %>%
+  hc_add_series(data = .SD, type = "line", hcaes(x = eventdate, y = rpp, group = ad_id), name = "rpp") %>%
+  # hc_add_series(data = .SD, type = "line", hcaes(x = eventdate, y = buy_side_cpm, group = ad_id), name = "buy_side_cpm") %>%
+  hc_add_series(data = .SD, type = "line", hcaes(x = eventdate, y = roas, group = ad_id), name = "roas") %>%
+  hc_add_theme(hc_theme_smpl())
+}]
+```
+:::
+
+::: {.col-md-6}
+```{r, fig.width=6, fig.height=6}
+top_campaigns_talia = tb[(between(mean_budget,10,40) & buyer_name %in% winner_buyers[1])][!duplicated(ad_id), ad_id][3]
+
+cols3 <- c(
+  "buy_side_ctr", 
+  "cpp", 
+  "cpc", 
+  "rpc", 
+  "rpp", 
+  "buy_side_cpm",
+  "roas"
+  # "fb_impressions", 
+  # "fb_clicks_all", 
+  # "fb_leads", 
+  # "fb_link_click"
+  )
+
+filtered_data <- tb[ad_id %in% top_campaigns_talia, .SD, .SDcols = c(cols3, "eventdate", "ad_id")]
+
+filtered_data[, {
+  hc <- highchart() %>%
+    hc_xAxis(type = "datetime", title = list(text = "Event Date"))
+  
+hc <- hc %>%
+  hc_add_series(data = .SD, type = "line", hcaes(x = eventdate, y = buy_side_ctr, group = ad_id), name = "buy_side_ctr") %>%
+  hc_add_series(data = .SD, type = "line", hcaes(x = eventdate, y = cpp, group = ad_id), name = "cpp") %>%
+  hc_add_series(data = .SD, type = "line", hcaes(x = eventdate, y = cpc, group = ad_id), name = "cpc") %>%
+  hc_add_series(data = .SD, type = "line", hcaes(x = eventdate, y = rpc, group = ad_id), name = "rpc") %>%
+  hc_add_series(data = .SD, type = "line", hcaes(x = eventdate, y = rpp, group = ad_id), name = "rpp") %>%
+  # hc_add_series(data = .SD, type = "line", hcaes(x = eventdate, y = buy_side_cpm, group = ad_id), name = "buy_side_cpm") %>%
+  hc_add_series(data = .SD, type = "line", hcaes(x = eventdate, y = roas, group = ad_id), name = "roas") %>%
+  hc_add_theme(hc_theme_smpl())
+}]
+```
+:::
+::: {.col-md-6}
+```{r, fig.width=6, fig.height=6}
+top_campaigns_talia = tb[(between(mean_budget,10,40) & buyer_name %in% winner_buyers[1])][!duplicated(ad_id), ad_id][4]
+
+cols3 <- c(
+  "buy_side_ctr", 
+  "cpp", 
+  "cpc", 
+  "rpc", 
+  "rpp", 
+  "buy_side_cpm",
+  "roas"
+  # "fb_impressions", 
+  # "fb_clicks_all", 
+  # "fb_leads", 
+  # "fb_link_click"
+  )
+
+filtered_data <- tb[ad_id %in% top_campaigns_talia, .SD, .SDcols = c(cols3, "eventdate", "ad_id")]
+
+filtered_data[, {
+  hc <- highchart() %>%
+    hc_xAxis(type = "datetime", title = list(text = "Event Date"))
+  
+hc <- hc %>%
+  hc_add_series(data = .SD, type = "line", hcaes(x = eventdate, y = buy_side_ctr, group = ad_id), name = "buy_side_ctr") %>%
+  hc_add_series(data = .SD, type = "line", hcaes(x = eventdate, y = cpp, group = ad_id), name = "cpp") %>%
+  hc_add_series(data = .SD, type = "line", hcaes(x = eventdate, y = cpc, group = ad_id), name = "cpc") %>%
+  hc_add_series(data = .SD, type = "line", hcaes(x = eventdate, y = rpc, group = ad_id), name = "rpc") %>%
+  hc_add_series(data = .SD, type = "line", hcaes(x = eventdate, y = rpp, group = ad_id), name = "rpp") %>%
+  # hc_add_series(data = .SD, type = "line", hcaes(x = eventdate, y = buy_side_cpm, group = ad_id), name = "buy_side_cpm") %>%
+  hc_add_series(data = .SD, type = "line", hcaes(x = eventdate, y = roas, group = ad_id), name = "roas") %>%
+  hc_add_theme(hc_theme_smpl())
+}]
+```
+:::
+::: {.col-md-6}
+```{r, fig.width=6, fig.height=6}
+top_campaigns_talia = tb[(between(mean_budget,10,40) & buyer_name %in% winner_buyers[1])][!duplicated(ad_id), ad_id][5]
+
+cols3 <- c(
+  "buy_side_ctr", 
+  "cpp", 
+  "cpc", 
+  "rpc", 
+  "rpp", 
+  "buy_side_cpm",
+  "roas"
+  # "fb_impressions", 
+  # "fb_clicks_all", 
+  # "fb_leads", 
+  # "fb_link_click"
+  )
+
+filtered_data <- tb[ad_id %in% top_campaigns_talia, .SD, .SDcols = c(cols3, "eventdate", "ad_id")]
+
+filtered_data[, {
+  hc <- highchart() %>%
+    hc_xAxis(type = "datetime", title = list(text = "Event Date"))
+  
+hc <- hc %>%
+  hc_add_series(data = .SD, type = "line", hcaes(x = eventdate, y = buy_side_ctr, group = ad_id), name = "buy_side_ctr") %>%
+  hc_add_series(data = .SD, type = "line", hcaes(x = eventdate, y = cpp, group = ad_id), name = "cpp") %>%
+  hc_add_series(data = .SD, type = "line", hcaes(x = eventdate, y = cpc, group = ad_id), name = "cpc") %>%
+  hc_add_series(data = .SD, type = "line", hcaes(x = eventdate, y = rpc, group = ad_id), name = "rpc") %>%
+  hc_add_series(data = .SD, type = "line", hcaes(x = eventdate, y = rpp, group = ad_id), name = "rpp") %>%
+  # hc_add_series(data = .SD, type = "line", hcaes(x = eventdate, y = buy_side_cpm, group = ad_id), name = "buy_side_cpm") %>%
+  hc_add_series(data = .SD, type = "line", hcaes(x = eventdate, y = roas, group = ad_id), name = "roas") %>%
+  hc_add_theme(hc_theme_smpl())
+}]
+```
+:::
+::: {.col-md-6}
+```{r, fig.width=6, fig.height=6}
+top_campaigns_talia = tb[(between(mean_budget,10,40) & buyer_name %in% winner_buyers[1])][!duplicated(ad_id), ad_id][7]
+
+cols3 <- c(
+  "buy_side_ctr", 
+  "cpp", 
+  "cpc", 
+  "rpc", 
+  "rpp", 
+  "buy_side_cpm",
+  "roas"
+  # "fb_impressions", 
+  # "fb_clicks_all", 
+  # "fb_leads", 
+  # "fb_link_click"
+  )
+
+filtered_data <- tb[ad_id %in% top_campaigns_talia, .SD, .SDcols = c(cols3, "eventdate", "ad_id")]
+
+filtered_data[, {
+  hc <- highchart() %>%
+    hc_xAxis(type = "datetime", title = list(text = "Event Date"))
+  
+hc <- hc %>%
+  hc_add_series(data = .SD, type = "line", hcaes(x = eventdate, y = buy_side_ctr, group = ad_id), name = "buy_side_ctr") %>%
+  hc_add_series(data = .SD, type = "line", hcaes(x = eventdate, y = cpp, group = ad_id), name = "cpp") %>%
+  hc_add_series(data = .SD, type = "line", hcaes(x = eventdate, y = cpc, group = ad_id), name = "cpc") %>%
+  hc_add_series(data = .SD, type = "line", hcaes(x = eventdate, y = rpc, group = ad_id), name = "rpc") %>%
+  hc_add_series(data = .SD, type = "line", hcaes(x = eventdate, y = rpp, group = ad_id), name = "rpp") %>%
+  # hc_add_series(data = .SD, type = "line", hcaes(x = eventdate, y = buy_side_cpm, group = ad_id), name = "buy_side_cpm") %>%
+  hc_add_series(data = .SD, type = "line", hcaes(x = eventdate, y = roas, group = ad_id), name = "roas") %>%
+  hc_add_theme(hc_theme_smpl())
+}]
+```
+:::
+:::
+
+<br/>
+
+**Early detection:** 
+
+```{r,fig.width=14, fig.height=6}
+library(rpart)
+cols2= c("buy_side_ctr", "cpp", "cpc", "rpc", "rpp",
+          "buy_side_cpm", "prftble", "fb_impressions", "fb_clicks_all","fb_leads", "fb_link_click")
+mnt_data[, prftble:= fifelse(sum(contrib,na.rm = TRUE) >=10, 1, 0), ad_id] 
+mnt_data_filtered <- mnt_data[, .SD[eventdate <= min(eventdate) + 3], by = ad_id]
+mnt_data_aggregated <- mnt_data_filtered[, .(
+  fb_impressions = sum(fb_impressions),
+  fb_clicks_all = sum(fb_clicks_all),
+  fb_leads = sum(fb_leads),
+  fb_link_click = sum(fb_link_click),
+  buy_side_ctr = sum(fb_link_click) / sum(fb_impressions),
+  cpp = sum(fb_spend) / sum(fb_leads),
+  cpc = sum(fb_spend) / sum(fb_clicks_all),
+  rpc = sum(net_revenue) / sum(fb_clicks_all),
+  rpp = sum(net_revenue) / sum(fb_leads),
+  buy_side_cpm = sum(fb_spend) / sum(fb_impressions) * 1000,
+  prftble
+), by = ad_id]
+mnt_data_binarized <- mnt_data_aggregated[, .SD, .SDcols = cols2] %>% na.omit() %>% correlationfunnel::binarize(n_bins = 20, thresh_infreq = 0.01)
+mnt_data_correlated <- mnt_data_binarized %>%
+  correlationfunnel::correlate(target = prftble__1)
+correlation_funnel_plot <- mnt_data_correlated %>%
+  correlationfunnel::plot_correlation_funnel(interactive = FALSE)
+correlation_funnel_plot
+```
+<br/>
+**Keyword anaylsis:**
+
+```{r}
+top_buyers_kws = fread("top_buyers_kws.csv")
+top_buyers_kws[, .(sum_actual_net_revenue = sum(ACTUAL_NET_REVENUE,na.rm = TRUE)),.(CAMPAIGN_NAME,KEYWORD)][order(-sum_actual_net_revenue)][1:40]
+```
+
+<!-- ##### intro 
+
+<div class = "row">
+<div class = "column" style="width:130%;"  >
+```{r,fig.width=10, fig.height=6} 
+mnt_data %>%
+  group_by(eventdate) %>%
+  summarise(unique_ads = n_distinct(ad_id)) %>%
+  hchart("column", hcaes(x = eventdate, y = unique_ads)) %>% 
+  hc_title(text = "Number of Campaigns over Time") %>% 
+  hc_navigator(enabled = TRUE) %>% hc_rangeSelector(enabled = TRUE)
+```
+</div>
+
+<div class = "column" style="width:130%;">
+```{r,fig.width=10, fig.height=6} 
+mnt_data %>%
+  group_by(eventdate) %>%
+  summarise(total_contrib = sum(contrib, na.rm = TRUE)) %>%
+  hchart("area", hcaes(x = eventdate, y = total_contrib)) %>% hc_tooltip(pointFormat = '{series.name}: <b>${point.y:,.0f}</b><br/>') %>% 
+  hc_title(text = "Total Contribution (fb_spend - net_rev) over Time") %>% 
+  hc_navigator(enabled = TRUE) %>% hc_rangeSelector(enabled = TRUE)  
+```
+</div>
+</div>
+
+<div class = "row">
+<div class = "column" style="width:130%;"  >
+```{r,fig.width=10, fig.height=6} 
+mnt_data %>%
+  group_by(buyer_name) %>%
+  summarise(contrib = sum(contrib, na.rm = TRUE)) %>%
+  arrange(desc(contrib)) %>%
+  hchart("bar", hcaes(x = buyer_name, y = contrib)) %>%
+  hc_xAxis(type = "category") %>%
+  hc_plotOptions(series = list(color = 'rgba(50, 171, 96, 0.6)', borderColor = 'rgba(50, 171, 96, 1.0)', borderWidth = 1)) %>%  
+  hc_title(text = "Total Contrib by buyer") 
+  ``` 
+</div>
+
+<div class = "column" style="width:130%;">
+```{r,fig.width=10, fig.height=6}
+mnt_data %>%
+  group_by(buyer_name) %>%
+  summarise(total_contrib = sum(contrib, na.rm = TRUE)) %>%
+  top_n(10, total_contrib) %>%
+  inner_join(mnt_data, by = "buyer_name") %>%
+  count(buyer_name) %>%
+  arrange(n) %>%
+  hchart("column", hcaes(x = buyer_name, y = n)) %>%
+  hc_xAxis(type = "category") %>%
+  hc_plotOptions(series = list(color = 'rgba(50, 171, 96, 0.6)', borderColor = 'rgba(50, 171, 96, 1.0)', borderWidth 
+  = 1))%>%  hc_title(text = "Total Contrib by buyer") %>% 
+  hc_title(text = "Campaigns by Buyer top 10 by total total_contrib") 
+``` 
+</div>
+</div>
+
+**Filter dataset to only include campaigns between 5 and 30 days:**
+
+<br/>
+<br/>
+
+<div class = "row">
+<div class = "column" style="width:130%;"  >
+```{r,} 
+mnt_data[,.N,.(ad_id,year_month)][,.N,year_month][order(-N),.(year_month,N, pct = scales::percent(N/sum(N)))][order(year_month)] %>% kableExtra::kbl() %>% kableExtra::kable_styling()
+``` 
+```{r, echo=FALSE}
+# filter dataset to only include campaigns between 5 and 30 days
+mnt_data = mnt_data[between(campaign_duration, 5, 90)]
+#  from august 2023 to january 2024
+mnt_data = mnt_data[between(eventdate, as.Date("2023-08-01"), as.Date("2024-01-31"))]
+setcolorder(mnt_data,sort(names(mnt_data)))
+```
+</div>
+
+<div class = "column" style="width:130%;">
+```{r,}
+mnt_data[,.N,.(ad_id,year_month)][,.N,year_month][order(-N),.(year_month,N, pct = scales::percent(N/sum(N)))][order(year_month)] %>% kableExtra::kbl() %>% kableExtra::kable_styling()
+```
+</div>
+
+<div class = "column" style="width:130%;">
+```{r,fig.width=10, fig.height=8}
+data = mnt_data[, .(total_fb_spend = sum(fb_spend, na.rm = TRUE), total_net_revenue = sum(net_revenue, na.rm = TRUE), total_contrib = sum(contrib, na.rm = TRUE)), by = .(year_month)][order(year_month)]
+hchart(data, "bar", hcaes(x = year_month, y = total_net_revenue), name = "Net Revenue") %>%
+  hc_add_series(data, "bar", hcaes(x = year_month, y = total_fb_spend), name = "FB Spend") %>%
+  hc_title(text = "FB SPEND vs Net Revenue") %>%
+  hc_yAxis(title = list(text = "$")) %>%
+  hc_xAxis(type = "category") %>%
+  hc_tooltip(pointFormat = '{series.name}: <b>${point.y:,.0f}</b><br/>') %>%
+  hc_annotations(list(    
+    labels = list(
+      list(point = list(x = 80, y = 350, yAxis = 100, xAxis = 380),
+        text = 'Total_contrib: $10,987'),
+      list(point = list(x = 200 , y = 350, yAxis = 240, xAxis = 350),
+        text = 'Total_contrib: $1,462'),
+      list(point = list(x = 300 , y = 330, yAxis = 400, xAxis = 330),
+        text = 'Total_contrib: $15,569'),
+        list(point = list(x = 420 , y = 500, yAxis = 550, xAxis = 500),
+        text = 'Total_contrib:  $-1,385'),
+            list(point = list(x = 520 , y = 800, yAxis = 710, xAxis = 800),
+        text = 'Total_contrib:  $98,174'),
+        list(point = list(x = 630 , y = 440, yAxis = 870, xAxis = 500),
+        text = 'Total_contrib: $56,926')
+  )))
+```
+</div>
+</div>
+
+**Positive contribution campaigns:**
+
+```{r}
+contrib = mnt_data[,sum(contrib),ad_id]
+positive_contrib =  contrib[V1 > 0]
+print(paste(length(positive_contrib$V1), "of", nrow(mnt_data[,.N,ad_id])))
+```
+```{r,fig.width=10, fig.height=6}
+library(gridExtra)
+
+plot_histogram(positive_contrib[V1<2000,V1], geom_histogram_args = list(binwidth = 5))
+
+mnt_data[(ad_id %in% positive_contrib$ad_id) & !duplicated(ad_id) , .(total_campaign_contrib, campaign_active_days) ] %>% DataExplorer::plot_scatterplot(by = "campaign_active_days")
+
+mnt_data[(ad_id %in% positive_contrib$ad_id) & !duplicated(ad_id) , .(total_campaign_contrib, total_campaign_spend) ] %>% DataExplorer::plot_scatterplot(by = "total_campaign_spend") 
+```
+ -->
+<!-- ##### fb_data -->
+
+<!-- ```{r, echo=FALSE} 
+mnt_data %>%
+  group_by(eventdate) %>%
+  summarise(unique_ads = n_distinct(ad_id)) %>%
+  hchart("column", hcaes(x = eventdate, y = unique_ads)) %>% 
+  hc_title(text = "Number of Campaigns over Time") %>% 
+  hc_navigator(enabled = TRUE) %>% hc_rangeSelector(enabled = TRUE)  %>%
+   hc_exporting(showTable = TRUE, enabled = TRUE   
+    )
+
+``` -->
+
+<!-- ```{r,fig.width=14, fig.height=8, echo=FALSE}
+fb_hourly_p = fread("fb_hourly_p.csv")
+fb_hourly_p[,ad_id:= as.character(ad_id)]
+mnt_data[,ad_id:= as.character(ad_id)]
+setkey(fb_hourly_p, ad_id, eventdate)
+setkey(mnt_data, ad_id, eventdate)
+mnt_data_hourly = fb_hourly_p[mnt_data]
+
+clicks_table = melt(mnt_data_hourly[, .SD, .SDcols = paste0("clicks_", 1:24)])
+impressions_table = melt(mnt_data_hourly[, .SD, .SDcols = paste0("impressions_", 1:24)])
+
+spend_table = melt(mnt_data_hourly[, .SD, .SDcols = paste0("spend_", 1:24)])
+ctr_table = melt(mnt_data_hourly[, .SD, .SDcols = paste0("ctr_", 1:24)])
+cpc_table = melt(mnt_data_hourly[, .SD, .SDcols = paste0("cpc_", 1:24)])
+cpm_table = melt(mnt_data_hourly[, .SD, .SDcols = paste0("cpm_", 1:24)])
+
+clicks_mean <- clicks_table[, .(mean_value = mean(value, na.rm = TRUE)), by = variable] 
+impressions_mean <- impressions_table[, .(mean_value = mean(value, na.rm = TRUE)), by = variable]
+spend_mean <- spend_table[, .(mean_value = mean(value, na.rm = TRUE)), by = variable]
+ctr_mean <- ctr_table[, .(mean_value = mean(value, na.rm = TRUE)), by = variable]
+cpc_mean <- cpc_table[, .(mean_value = mean(value, na.rm = TRUE)), by = variable]
+cpm_mean <- cpm_table[, .(mean_value = mean(value, na.rm = TRUE)), by = variable]
+
+highchart() %>% 
+  hc_chart(type = "line") %>% 
+  hc_xAxis(categories = paste0("Hour ", 1:24)) %>%
+  hc_add_series(data = clicks_mean, hcaes(x = variable, y = mean_value), type = "line", name = "Clicks Mean") %>% 
+  hc_add_series(data = spend_mean, hcaes(x = variable, y = mean_value), type = "line", name = "Spend Mean") %>%
+  hc_add_series(data = ctr_mean, hcaes(x = variable, y = mean_value), type = "line", name = "CTR Mean") %>%
+  hc_add_series(data = cpc_mean, hcaes(x = variable, y = mean_value), type = "line", name = "CPC Mean") %>%
+  hc_add_series(data = cpm_mean, hcaes(x = variable, y = mean_value), type = "line", name = "CPM Mean")
+``` -->
+
+##### Q&A 
+
+```{sql, eval=FALSE}
+SELECT    
+   a.eventdate,   
+   a.buyer_initials,
+   a.buyer_name,
+   a.account_currency,
+   a.account_id,
+   a.account_name,
+   a.ad_id, 
+   a.ad_name,
+   a.adset_id,
+   a.adset_name,
+   a.campaign_id,
+   a.campaign_name,
+ 
+   a.job_type,
+   d.first_budget,
+   COALESCE(a.fb_clicks_all, 0) AS fb_clicks_all,
+   COALESCE(a.fb_impressions, 0) AS fb_impressions,
+   COALESCE(a.fb_leads, 0) AS fb_leads,
+   COALESCE(a.fb_link_click, 0) AS fb_link_click,
+   a.fb_spend,
+   a.rev_clicks,
+   a.gross_revenue,
+   a.net_revenue,
+   a.fb_clicks_all / COALESCE(NULLIF(a.fb_impressions, 0), 1) AS buy_side_ctr,
+   a.net_revenue / COALESCE(NULLIF(a.fb_spend, 0), 1) AS roas,
+   a.net_revenue / COALESCE(NULLIF(a.fb_clicks_all, 0), 1) AS rpc,
+   (a.fb_spend / COALESCE(NULLIF(a.fb_impressions, 0), 1))*1000 AS buy_side_cpm,
+   a.fb_spend / COALESCE(NULLIF(a.fb_clicks_all, 0), 1) AS cpc,
+   a.net_revenue / COALESCE(NULLIF(a.rev_clicks, 0), 1) AS rpp,
+   a.fb_spend / COALESCE(NULLIF(a.rev_clicks, 0), 1) AS cpp,
+   a.net_revenue - a.fb_spend AS contrib,    
+   
+
+   b.budget_type,   
+   b.status, 
+
+   c.devices,
+   c.countries,
+   c.network,
+   targeting_json:age_max::string AS age_max,
+   targeting_json:age_min::string AS age_min,
+   targeting_json:facebook_positions::string AS facebook_positions,
+   targeting_json:locales::string AS locales 
+   
+
+FROM PRODUCTION.BD_S2CINTERNAL.v_cm_fb_tonic_daily_combine a 
+
+LEFT JOIN SEM_TOOLS.cm_fb_campaign_management.ad_set_latest b 
+   ON a.adset_id = b.id  
+   AND a.campaign_id = b.campaign_id 
+   AND a.adset_name = b.name
+
+LEFT JOIN PRODUCTION.BD_S2CINTERNAL.V_FACEBOOK_ADSET_METADATA c 
+   ON a.adset_id = c.id 
+   AND a.eventdate = c.event_date
+
+LEFT JOIN (
+SELECT id, first_updated, first_budget FROM (
+   SELECT id, updated AS first_updated, budget AS first_budget,
+   ROW_NUMBER() OVER(PARTITION BY id ORDER BY updated ASC) AS rn
+   FROM sem_tools.CM_FB_CAMPAIGN_MANAGEMENT.ad_set
+) WHERE rn = 1
+) AS d ON a.adset_id = d.id
+
+WHERE a.buyer_initials <> 'GN'   
+and job_type = 'final'
+and c.countries = '["US"]'
+
+ORDER BY  a.ad_id ASC, a.eventdate ASC  
+```
+
+#### {-}
+
+#### {.tabset .tabset-fade .tabset-pills}
+
+##### budget analysis 
+
+
+
+##### early detection
+
+```{r, results='markup', collapse=TRUE}
+variables <- c("roas", "fb_spend", "estimated_budget")
+days <- c(1, 2)
+result <- data.table()
+for (var in variables) {
+  for (day in days) {
+    metric <- paste(var, "day", day, sep = "_")
+    
+    temp <- mnt_data[, {
+      var_day <- shift(get(var), day - 1)
+      ad_id_winners <- ad_id %in% positive_contrib$ad_id
+      .(
+        Metric = rep(metric, 6),
+        Level = c("min", "25%", "50%", "75%", "mean", "max"),
+        winners = .(
+          min(var_day[ad_id_winners], na.rm = TRUE),
+          quantile(var_day[ad_id_winners], 0.25, na.rm = TRUE),
+          quantile(var_day[ad_id_winners], 0.50, na.rm = TRUE),
+          quantile(var_day[ad_id_winners], 0.75, na.rm = TRUE),
+          mean(var_day[ad_id_winners], na.rm = TRUE),
+          max(var_day[ad_id_winners], na.rm = TRUE)
+        ),
+        losers = .(
+          min(var_day[!ad_id_winners], na.rm = TRUE),
+          quantile(var_day[!ad_id_winners], 0.25, na.rm = TRUE),
+          quantile(var_day[!ad_id_winners], 0.50, na.rm = TRUE),
+          quantile(var_day[!ad_id_winners], 0.75, na.rm = TRUE),
+          mean(var_day[!ad_id_winners], na.rm = TRUE),
+          max(var_day[!ad_id_winners], na.rm = TRUE)
+        )
+      )
+    }][, `:=`(winners = as.numeric(winners), losers = as.numeric(losers))][
+      , `:=`(Delta = winners - losers 
+            # delta_pc = (winners / losers - 1)    
+            )]
+
+    result <- rbindlist(list(result, temp))
+  }
+}
+
+result[, (names(result)[sapply(result, is.numeric)]) := lapply(.SD, round, 2), .SDcols = is.numeric]
+result[,delta_pct:= fifelse(winners>=losers, paste0("+", scales::percent(winners / losers - 1,0.1)), paste0("-", scales::percent(1 - winners / losers)))]
+result
+```
+
+##### breaks/reactivations
+
+- how many campaigns are non secuential
+- reactivation metrics 
+
+Number of unique campaigns with breaks in eventdata. 
+
+```{r,}
+mnt_data[!is.na(sequence_break) & sequence_break > 0, uniqueN(ad_id)]
+(mnt_data[!is.na(sequence_break) & sequence_break > 0, uniqueN(ad_id)]/ uniqueN(mnt_data$ad_id))%>% scales::percent(.,0.01)
+```
+
+Breaks stats 
+
+```{r,}
+
+```
+
+
+<!--
+perf metric comparison winner vs losers 
+
+perf metric comparison gn vs mrkts 
+
+buyers breakdown (budgets, spends )
+
+specific adhoc questions: 
+.i.e. 
+campaign breaks/ reactivation 
+max campaign spend
+
+-->
+
+
+

@@ -3,4 +3,6 @@
 contrib/__pycache__/
 utils/__pycache__/
 run_2.ipynb
+daily_budget_missing.ipynb
+production_data.ipynb
 

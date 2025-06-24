@@ -1,31 +1,88 @@
-FROM quay.io/jupyter/minimal-notebook
+# Copyright (c) Jupyter Development Team.
+# Distributed under the terms of the Modified BSD License.
+ARG REGISTRY=quay.io
+ARG OWNER=jupyter
+ARG BASE_CONTAINER=$REGISTRY/$OWNER/minimal-notebook
+FROM $BASE_CONTAINER
 
-USER root
 ARG GRANT_SUDO="yes"
 
-ARG env_name=py3.11
-ARG py_ver=3.11
+USER root
+RUN if [ "$GRANT_SUDO" = "1" ] || [ "$GRANT_SUDO" = "yes" ]; then \
+    echo "Granting ${NB_USER} passwordless sudo rights!"; \
+    echo "${NB_USER} ALL=(ALL) NOPASSWD:ALL" > /etc/sudoers.d/added-by-start-script; \
+    fi
+USER $NB_USER
 
-# Copy the requirements.txt file into the image
-COPY requirements.txt /tmp/
+LABEL maintainer="Jupyter Project <jupyter@googlegroups.com>"
 
-# Use mamba to create the environment and install the required packages
-RUN mamba create --yes -n "${env_name}" \
-    python=${py_ver} \
-    'ipykernel' \
-    'jupyterlab' \
-    'mamba' \
-    'pip' \
-    && mamba clean --all -f -y
+# Fix: https://github.com/hadolint/hadolint/wiki/DL4006
+# Fix: https://github.com/koalaman/shellcheck/wiki/SC3014
+SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 
-# Activate the environment and install the Python packages specified in requirements.txt
-RUN /bin/bash -c "source activate ${env_name} && pip install -r /tmp/requirements.txt"
+USER root
 
-# Create Python kernel and link it to jupyter
-RUN "${CONDA_DIR}/envs/${env_name}/bin/python" -m ipykernel install --user --name="${env_name}" && \
+
+RUN mamba install --yes 'flake8' && \
+    mamba clean --all -f -y && \
     fix-permissions "${CONDA_DIR}" && \
     fix-permissions "/home/${NB_USER}"
 
-# This changes the custom Python kernel so that the custom environment will
-# be activated for the respective Jupyter Notebook and Jupyter Console
-RUN /opt/setup-scripts/activate_notebook_custom_env.py "${env_name}"
+# Install from the requirements.txt file
+COPY --chown=${NB_UID}:${NB_GID} requirements.txt /tmp/
+RUN mamba install --yes --file /tmp/requirements.txt && \
+    mamba clean --all -f -y && \
+    fix-permissions "${CONDA_DIR}" && \
+    fix-permissions "/home/${NB_USER}"
+
+# R pre-requisites
+RUN apt-get update --yes && \
+    apt-get install --yes --no-install-recommends \
+    fonts-dejavu \
+    unixodbc \
+    unixodbc-dev \
+    libxml2-dev \
+    pkg-config \
+    libmagick++-dev \
+    libfontconfig1-dev \
+    libfreetype6-dev \
+    imagemagick \
+    libcairo2-dev \
+    libglpk-dev \
+    libx11-dev \
+    liblzma-dev \
+    texlive \
+    texlive-fonts-extra \
+    curl\
+    gfortran \
+    gcc && \
+    apt-get clean && rm -rf /var/lib/apt/lists/*
+
+USER ${NB_UID}
+
+
+# R packages including IRKernel which gets installed globally.
+# r-e1071: dependency of the caret R package
+RUN mamba install --yes \
+    'r-base' \
+    'r-devtools' \
+    'r-irkernel' \      
+    'r-remotes' \
+    'r-bit64' \
+    'r-languageserver' \
+    'r-rcurl' \    
+    'r-rmarkdown' \
+    'r-plotly' \
+    'r-reticulate' \
+    'r-DataExplorer' \
+    'r-dplyr' \
+    'r-kableExtra' \
+    'r-summarytools' \    
+    'r-Hmisc' \
+    'r-lubridate' && \
+    R -e "remotes::install_github('nx10/httpgd')" && \
+    mamba clean --all -f -y && \
+    fix-permissions "${CONDA_DIR}" && \
+    fix-permissions "/home/${NB_USER}" && \
+    pip install radian
+

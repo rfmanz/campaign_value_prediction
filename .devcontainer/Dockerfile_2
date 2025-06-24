@@ -1,0 +1,110 @@
+FROM quay.io/jupyter/minimal-notebook
+
+
+ARG GRANT_SUDO="yes"
+ARG env_name=py3.11
+ARG py_ver=3.11
+ENV LD_LIBRARY_PATH="${CONDA_DIR}/envs/${env_name}/lib:${LD_LIBRARY_PATH}"
+ENV NB_USER=jovyan
+ENV NB_UID=1000
+ENV NB_GID=100
+ENV CONDA_DIR=/opt/conda
+ENV PATH="${CONDA_DIR}/envs/${env_name}/bin:${PATH}"
+
+
+USER root
+
+
+RUN if [ "$GRANT_SUDO" = "1" ] || [ "$GRANT_SUDO" = "yes" ]; then \
+    echo "Granting ${NB_USER} passwordless sudo rights!"; \
+    echo "${NB_USER} ALL=(ALL) NOPASSWD:ALL" >> /etc/sudoers.d/added-by-start-script; \
+    fi
+
+# Copy the requirements.txt file into the image
+COPY requirements.txt /tmp/
+
+# Update and install system dependencies
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends build-essential libxml2-dev pkg-config libfontconfig1-dev libfreetype6-dev imagemagick libmagick++-dev libglpk-dev \
+    libharfbuzz-dev libfribidi-dev libglpk40 libmagickcore-dev g++ gfortran libpng-dev && \  
+    rm -rf /var/lib/apt/lists/* 
+    
+
+
+# Assuming jovyan is the user, but verify this for your specific base image
+
+
+# Use mamba to create the environment and install the required Python, R packages, and compilers
+RUN mamba create --yes -n "${env_name}" \
+    python=${py_ver} \
+    'ipykernel' \
+    'jupyterlab' \
+    'mamba' \
+    'pip' \
+    'r-base' \
+    'r-irkernel' \
+    'gcc_linux-64' \
+    'gxx_linux-64'\
+    'gxx_linux-64' && \
+    mamba clean --all -f -y
+
+
+# Set environment variables for the compilers
+ENV CC ${CONDA_DIR}/envs/${env_name}/bin/x86_64-conda-linux-gnu-cc
+ENV CXX ${CONDA_DIR}/envs/${env_name}/bin/x86_64-conda-linux-gnu-c++
+
+# # Activate the environment and install the Python packages specified in requirements.txt
+# RUN echo "source activate ${env_name}" > ~/.bashrc
+# ENV PATH /opt/conda/envs/${env_name}/bin:$PATH
+# RUN /opt/conda/envs/${env_name}/bin/pip install -r /tmp/requirements.txt
+
+# Correctly set up .bashrc for the jovyan user
+RUN echo "source /opt/conda/etc/profile.d/conda.sh" >> /home/${NB_USER}/.bashrc && \
+    echo "conda activate ${env_name}" >> /home/${NB_USER}/.bashrc
+
+# Install Python packages specified in requirements.txt
+RUN /opt/conda/envs/${env_name}/bin/pip install -r /tmp/requirements.txt
+
+RUN pip install radian 
+
+RUN ${CONDA_DIR}/envs/${env_name}/bin/R -e "install.packages('remotes', repos='https://cloud.r-project.org/')" && \
+    ${CONDA_DIR}/envs/${env_name}/bin/R -e "remotes::install_github('nx10/httpgd')"
+
+# Install other R packages
+RUN ${CONDA_DIR}/envs/${env_name}/bin/R -e "install.packages('languageserver', repos='https://cloud.r-project.org/')"
+RUN ${CONDA_DIR}/envs/${env_name}/bin/R -e "install.packages('Hmisc', repos='https://cloud.r-project.org/')"
+RUN ${CONDA_DIR}/envs/${env_name}/bin/R -e "install.packages('data.table', repos='https://cloud.r-project.org/')"
+RUN ${CONDA_DIR}/envs/${env_name}/bin/R -e "install.packages('ggplot2', repos='https://cloud.r-project.org/')"
+RUN ${CONDA_DIR}/envs/${env_name}/bin/R -e "install.packages('bit64', repos='https://cloud.r-project.org/')"
+RUN ${CONDA_DIR}/envs/${env_name}/bin/R -e "install.packages('plotly', repos='https://cloud.r-project.org/')"
+RUN ${CONDA_DIR}/envs/${env_name}/bin/R -e "install.packages('summarytools', repos='https://cloud.r-project.org/')"
+RUN ${CONDA_DIR}/envs/${env_name}/bin/R -e "install.packages('reticulate', repos='https://cloud.r-project.org/')"
+RUN ${CONDA_DIR}/envs/${env_name}/bin/R -e "install.packages('xray', repos='https://cloud.r-project.org/')"
+RUN ${CONDA_DIR}/envs/${env_name}/bin/R -e "install.packages('DataExplorer', repos='https://cloud.r-project.org/')"
+RUN ${CONDA_DIR}/envs/${env_name}/bin/R -e "install.packages('dplyr', repos='https://cloud.r-project.org/')"
+RUN ${CONDA_DIR}/envs/${env_name}/bin/R -e "install.packages('kableExtra', repos='https://cloud.r-project.org/')"
+RUN ${CONDA_DIR}/envs/${env_name}/bin/R -e "install.packages('devtools', repos='https://cloud.r-project.org/')"
+RUN ${CONDA_DIR}/envs/${env_name}/bin/R -e "install.packages('lubridate', repos='https://cloud.r-project.org/')"
+
+# Create Python kernel and link it to jupyter
+RUN "${CONDA_DIR}/envs/${env_name}/bin/python" -m ipykernel install --user --name="${env_name}" && \
+    fix-permissions "${CONDA_DIR}" && \
+    fix-permissions "/home/${NB_USER}"
+
+# Create a directory for R libraries where the user has write permissions
+RUN mkdir -p /home/${NB_USER}/R/libs && \
+    chown ${NB_USER} /home/${NB_USER}/R/libs
+
+# Append R_LIBS_USER to Renviron
+RUN /bin/bash -c "R_ENV_DIR=\$(${CONDA_DIR}/envs/${env_name}/bin/Rscript -e \"cat(Sys.getenv('R_HOME'))\") && \
+    echo \"R_LIBS_USER='/home/${NB_USER}/R/libs'\" >> \${R_ENV_DIR}/etc/Renviron && \
+    fix-permissions /home/${NB_USER}/R"
+
+RUN /opt/setup-scripts/activate_notebook_custom_env.py "${env_name}"
+
+# # Append commands to ~/.bashrc to activate the conda environment automatically
+# RUN echo "source /opt/conda/etc/profile.d/conda.sh" >> /home/${NB_USER}/.bashrc && \
+#     echo "conda activate py3.11" >> /home/${NB_USER}/.bashrc
+
+
+USER ${NB_USER}   

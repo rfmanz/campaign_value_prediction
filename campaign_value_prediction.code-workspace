@@ -1,0 +1,11 @@
+{
+	"folders": [
+		{
+			"name": "campaign_value_prediction",
+			"path": "."
+		}
+	],
+	"settings": {
+		"editor.wordWrap": "on"
+	}
+}

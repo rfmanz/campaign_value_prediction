@@ -1,4 +1,3 @@
-import pandas as pd
 import os
 from dotenv import load_dotenv
 from sqlalchemy import create_engine
@@ -39,7 +38,8 @@ sf_config = {
 }
 engine = create_engine(URL(**sf_config))
 
-def eq(sql_query, *args, **kwargs):
+
+def eq(sql_query, *args, **kwargs):    
     return pd.read_sql(sql_query.format(*args, **kwargs), engine)
 
 
