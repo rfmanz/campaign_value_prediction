@@ -7,7 +7,8 @@
 		"env_name": "py3.11",
 		"py_ver": "3.11"
 	  }
-	},	
+	},
+	"runArgs": ["--env-file", ".env"],
 	"forwardPorts": [8888],
 	"remoteUser": "jovyan",
 	"customizations": {
