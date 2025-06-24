@@ -110,12 +110,11 @@ library(plotly)
 library(DataExplorer)
 library(summarytools)
 library(reticulate)
-library(xray)
+use_python("/home/jovyan/.cache/R/reticulate/uv/cache/archive-v0/-nXXJMEbzvvU4ruO9nyMb/bin/python3")
 library(plyr)
 library(dplyr)
 # detach("package:plyr", unload=TRUE)
 # library(streamgraph)
-library(highcharter)
 library(lubridate)
 py_run_string("import sys; sys.path.append('utils')")
 amg_utils <- import("amg_utils")
@@ -681,7 +680,8 @@ mnt_data %>%
   hc_xAxis(type = "category") %>%
   hc_plotOptions(series = list(color = 'rgba(50, 171, 96, 0.6)', borderColor = 'rgba(50, 171, 96, 1.0)', borderWidth = 1)) %>%  
   hc_title(text = "Total Contrib by buyer") 
-  ``` 
+``` 
+</div>
 </div>
 
 <div class = "column" style="width:130%;">
